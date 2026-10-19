@@ -25,9 +25,8 @@ export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const stripHtml = (html) => {
-  const d = document.createElement('div');
-  d.innerHTML = html || '';
-  return d.textContent || '';
+  if (!html) return '';
+  return new DOMParser().parseFromString(html, 'text/html').body.textContent || '';
 };
 
 // ---------- 팝업 메뉴 ----------

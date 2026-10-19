@@ -45,9 +45,12 @@ export function saveNow() {
   clearTimeout(timer);
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
+    return true;
   } catch (e) {
     console.error(e);
-    alert('저장 공간이 가득 찼습니다. 큰 이미지를 지우거나 설정 → JSON 내보내기로 백업하세요.');
+    if (!saveNow.warned) alert('저장 공간이 가득 찼습니다. 큰 이미지를 지우거나 설정 → JSON 내보내기로 백업하세요.');
+    saveNow.warned = true;
+    return false;
   }
 }
 addEventListener('beforeunload', saveNow);
@@ -56,6 +59,14 @@ export function replaceState(next) {
   if (!next || typeof next !== 'object' || !next.pages || !Array.isArray(next.root)) {
     throw new Error('JJ 노트 백업 파일 형식이 아닙니다.');
   }
+  for (const p of Object.values(next.pages)) {
+    for (const b of p.blocks || []) {
+      b.html = sanitize(b.html);
+      if (b.caption) b.caption = sanitize(b.caption);
+      if (b.url && !/^https?:\/\//.test(b.url)) b.url = '';
+      if (b.src && !/^(https?:|data:image\/)/.test(b.src)) b.src = '';
+    }
+  }
   state = { ...blank(), ...next };
   saveNow();
 }
@@ -63,6 +74,19 @@ export function resetAll() {
   state = blank();
   seed();
   saveNow();
+}
+
+// 사용자 HTML 에서 스크립트·이벤트 속성·javascript: 링크 제거 (실행되지 않는 DOMParser 사용)
+export function sanitize(html) {
+  if (!html) return '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.body.querySelectorAll('script,style,iframe,object,embed,link,meta,form,svg').forEach((n) => n.remove());
+  for (const el of doc.body.querySelectorAll('*')) {
+    for (const a of [...el.attributes]) {
+      if (/^on/i.test(a.name) || (/^(href|src|xlink:href|action)$/i.test(a.name) && /^\s*javascript:/i.test(a.value))) el.removeAttribute(a.name);
+    }
+  }
+  return doc.body.innerHTML;
 }
 
 export const page = (id) => (id ? state.pages[id] : null);
@@ -141,6 +165,7 @@ export function restorePage(id) {
   const p = page(id);
   if (!p) return;
   p.trashed = false;
+  for (let a = page(p.parent); a; a = page(a.parent)) a.trashed = false;
   if (p.parent && !page(p.parent)) moveTo(id, null);
   save();
   emit('structure');

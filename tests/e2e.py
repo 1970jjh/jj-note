@@ -23,6 +23,7 @@ with sync_playwright() as p:
 
     # 2) 새 페이지 + 제목 + 블록 입력
     pg.get_by_role("button", name="새 페이지").first.click()
+    pg.wait_for_selector(".page-title:focus")
     pg.keyboard.type("테스트 페이지")
     pg.keyboard.press("Enter")
     pg.keyboard.type("첫 줄")
@@ -71,7 +72,7 @@ with sync_playwright() as p:
     pg.locator(".blocks-tail").click()
     pg.keyboard.type("/페이지")
     pg.keyboard.press("Enter")
-    pg.wait_for_selector(".page-title")
+    pg.wait_for_selector(".page-title:focus")
     pg.keyboard.type("하위 문서")
     expect(pg.locator(".crumbs")).to_contain_text("테스트 페이지")
     pg.locator(".crumb", has_text="테스트 페이지").click()

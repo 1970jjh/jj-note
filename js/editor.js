@@ -1,5 +1,5 @@
 // 블록 에디터: 슬래시 명령어 · 마크다운 단축키 · 드래그 이동 · 들여쓰기/토글
-import { page, blk, touch, createPage, createDatabase, trashPage, titleOf, iconOf, isTrashed, emit } from './store.js';
+import { page, blk, touch, saveNow, createPage, createDatabase, trashPage, titleOf, iconOf, isTrashed, emit } from './store.js';
 import { h, menu, closeMenu, place, emojiPicker, COLORS, COLOR_LABEL, toast } from './ui.js';
 
 export const TYPES = [
@@ -222,7 +222,11 @@ function imageBody(b) {
     if (!f) return;
     if (f.size > 1.5 * 1024 * 1024) return toast('1.5MB 이하 이미지만 올릴 수 있어요 (브라우저 저장 용량 한계)');
     const rd = new FileReader();
-    rd.onload = () => { b.src = rd.result; commit(); render(); };
+    rd.onload = () => {
+      b.src = rd.result;
+      if (!saveNow()) { delete b.src; toast('저장 공간이 부족해 이미지를 넣지 못했습니다'); }
+      render();
+    };
     rd.readAsDataURL(f);
   });
   return h('div', { class: 'body placeholder-box' }, '🖼 ', url,
@@ -233,7 +237,7 @@ function bookmarkBody(b) {
   if (b.url) {
     let host = b.url;
     try { host = new URL(b.url).hostname; } catch { /* 그대로 */ }
-    return h('a', { class: 'body bookmark', href: b.url, target: '_blank', rel: 'noopener noreferrer' },
+    return h('a', { class: 'body bookmark', href: /^https?:\/\//.test(b.url) ? b.url : '#', target: '_blank', rel: 'noopener noreferrer' },
       h('div', { class: 'bm-title' }, host), h('div', { class: 'bm-url' }, b.url));
   }
   const url = h('input', { class: 'inp', placeholder: '링크(URL) 붙여넣기 후 Enter' });
@@ -249,11 +253,12 @@ function bookmarkBody(b) {
 // ---------- 블록 메뉴 ----------
 function blockMenu(anchor, b) {
   const i = idx(b);
+  if (i < 0) return render();
   menu(anchor, [
     { icon: '🗑', label: '삭제', hint: 'Del', danger: true, onClick: () => removeBlock(b) },
     { icon: '⧉', label: '복제', onClick: () => {
       const end = subtreeEnd(i);
-      const copies = ctx.p.blocks.slice(i, end).map((x) => ({ ...structuredClone(x), id: Math.random().toString(36).slice(2) }));
+      const copies = ctx.p.blocks.slice(i, end).filter((x) => x.type !== 'page').map((x) => ({ ...structuredClone(x), id: Math.random().toString(36).slice(2) }));
       if (b.type === 'page') return toast('페이지 블록은 사이드바의 … 메뉴에서 복제하세요');
       ctx.p.blocks.splice(end, 0, ...copies); commit(); render();
     } },
@@ -263,11 +268,10 @@ function blockMenu(anchor, b) {
       if (nx) moveBlock(b.id, nx.id, true);
     } },
     'sep',
-    { header: '전환' },
-    ...TYPES.filter((t) => TEXTUAL.has(t.type)).map((t) => ({
+    ...(TEXTUAL.has(b.type) ? [{ header: '전환' }, ...TYPES.filter((t) => TEXTUAL.has(t.type)).map((t) => ({
       icon: t.icon, label: t.label, active: t.type === b.type,
       onClick: () => { b.type = t.type; if (t.type === 'callout') b.icon ||= '💡'; commit(); render({ id: b.id, pos: 'end' }); },
-    })),
+    }))] : []),
     'sep',
     { header: '색' },
     h('div', { class: 'color-row' }, COLORS.map((c) => h('button', {
@@ -288,6 +292,7 @@ function prevSibling(i) {
 
 function removeBlock(b) {
   const i = idx(b);
+  if (i < 0) return render();
   if (b.type === 'page' && page(b.pageId)) {
     trashPage(b.pageId);
     toast('페이지를 휴지통으로 옮겼습니다');
@@ -349,6 +354,7 @@ function onPaste(e, b, ce) {
   if (!text) return;
   const lines = text.replace(/\r/g, '').split('\n');
   if (b.type === 'code' || lines.length === 1) return document.execCommand('insertText', false, text);
+  const { after: tail } = splitAtCaret(ce);
   document.execCommand('insertText', false, lines[0]);
   b.html = ce.innerHTML;
   const fresh = lines.slice(1).filter((l, i, a) => l.trim() || i < a.length - 1).map((l) => {
@@ -365,6 +371,11 @@ function onPaste(e, b, ce) {
     d.textContent = s;
     return blk(type, { html: d.innerHTML, indent, checked });
   });
+  if (tail) {
+    const lastText = fresh.at(-1);
+    if (lastText && TEXTUAL.has(lastText.type)) lastText.html += tail;
+    else fresh.push(blk('text', { html: tail, indent: b.indent }));
+  }
   const i = subtreeEnd(idx(b));
   ctx.p.blocks.splice(i, 0, ...fresh);
   commit();
@@ -424,10 +435,10 @@ function onKey(e, b, ce) {
       return focusTitle();
     }
     if (!TEXTUAL.has(prev.type)) {
-      if (prev.type === 'page') return toast('페이지 블록은 ⋮⋮ 메뉴에서 삭제하세요');
-      ctx.p.blocks.splice(idx(prev), 1);
+      if (b.html) return toast('위 블록은 ⋮⋮ 메뉴에서 삭제하세요');
+      ctx.p.blocks.splice(i, 1);
       commit();
-      return render({ id: b.id, pos: 'start' });
+      return render();
     }
     const pos = textLen(prev.html);
     prev.html = (prev.html || '') + (b.html || '');
@@ -438,7 +449,7 @@ function onKey(e, b, ce) {
 
   if (e.key === 'Delete' && collapsed && off === len) {
     const nx = ctx.p.blocks[idx(b) + 1];
-    if (!nx || !TEXTUAL.has(nx.type)) return;
+    if (!nx || !TEXTUAL.has(nx.type) || !ctx.el.querySelector(`.block[data-id="${nx.id}"]`)) return;
     e.preventDefault();
     b.html = (b.html || '') + (nx.html || '');
     ctx.p.blocks.splice(idx(nx), 1);
@@ -455,7 +466,11 @@ function onKey(e, b, ce) {
     if (delta < 0 && b.indent === 0) return;
     if (delta > 0 && (!prev || b.indent > prev.indent)) return;
     for (let j = i; j < end; j++) ctx.p.blocks[j].indent += delta;
-    if (prev?.type === 'toggle' && delta > 0) prev.open = true;
+    if (delta > 0)
+      for (let j = i - 1, lv = b.indent; j >= 0 && lv > 0; j--) {
+        const a = ctx.p.blocks[j];
+        if (a.indent < lv) { lv = a.indent; if (a.type === 'toggle') a.open = true; }
+      }
     commit();
     return render({ id: b.id, pos: off });
   }

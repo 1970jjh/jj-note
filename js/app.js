@@ -436,9 +436,21 @@ document.addEventListener('keydown', (e) => {
 addEventListener('hashchange', route);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 let sbTimer;
-bus.addEventListener('structure', () => { clearTimeout(sbTimer); sbTimer = setTimeout(renderSidebar, 30); });
+bus.addEventListener('structure', () => {
+  clearTimeout(sbTimer);
+  sbTimer = setTimeout(() => {
+    renderSidebar();
+    const editing = document.activeElement?.closest?.('#content');
+    if (currentId && !editing) (page(currentId) && !isTrashed(currentId) ? renderPage(page(currentId)) : (location.hash = '#/'));
+  }, 30);
+});
 bus.addEventListener('titles', () => { clearTimeout(sbTimer); sbTimer = setTimeout(renderSidebar, 300); });
-addEventListener('storage', (e) => { if (e.key === 'jjnote.v1') { load(); boot(); } });
+let otherTabChanged = false;
+addEventListener('storage', (e) => { if (e.key === 'jjnote.v1') otherTabChanged = true; });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return saveNow();
+  if (otherTabChanged) { otherTabChanged = false; load(); boot(); }
+});
 
 load();
 boot();
